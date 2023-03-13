@@ -1,0 +1,17 @@
+##  
+## GitSync Language
+## Version 2.0.0
+## 
+
+prefix: "&r"
+
+messages:
+    start-sync: " &eAttempting to sync server with &6$1&e..."
+    finish-sync: " &aSynced server with &2$1&a in &2$2&a!"
+    fail-sync: " &cFailed to sync server with &4$1&c!"
+    start-clone: " &eFetching repository &6$1&e from &6$2&e..."
+    finish-clone: " &aFetched repository &2$1&a in &2$2&a!"
+    delete-path: " &cDeleting file path &4$1&c!"
+    create-path: " &eCreating file path &6$1&e!"
+    transfer-path: " &eTransfering file path &6$1&e to &6$2&e!"
+    multiple-repo-alert: " &3$1&b repositories have been queued."
