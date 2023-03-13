@@ -29,6 +29,8 @@ GitSync is a simple script that allows you to use Github in Skript workflow.
 ## Usage
 In order to use GitSync, you must set up your repository correctly. For GitSync to recognize and use your repository, you must put all `.sk` files inside of a `/src/` folder on your repository.
 
+After you have properly set up your configuration and repository, you can run `/sync` every time you want to sync your server!
+
 ## Configuration
 
 ### Authentication
