@@ -1,0 +1,260 @@
+#
+#	GitSync 2.0.0
+#
+#	Requires Skript 2.6.4
+#	
+#	GitSync allows anybody to integrate Github into their
+#	Minecraft server.
+#
+#	Written by Baezor (https://baezor.com/)
+#	Copyright © 2023 Baezor
+#
+
+#
+#	Configuration
+#
+
+# Repository Settings
+options:
+
+	version: 2.0.0-dev1
+
+#
+#	Importing
+#
+
+# Imports
+import:
+	
+	java.io.File
+	java.util.List
+	java.util.Set
+	java.util.Arrays
+	org.eclipse.jgit.api.Git
+	org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider as UserProvider
+
+#
+#	Commands
+#
+
+# Sync Command
+command /sync [<string>]:
+	aliases: gitsync
+	permission: gitsync.admin
+	permission message: &cYou do not have permission to use this command!
+	trigger:
+		set {_amount} to amount of {-git::repos::*}
+		if {_amount} > 1:
+			git_sendToOperators(git_parseLang("multiple-repo-alert", ("%{_amount}%")))
+		loop {-git::repos::*}:
+			git_sync(loop-value)
+
+#
+#	YAML Configuration
+#
+
+# Load Configurations
+on load:
+	
+	delete {-git::*}
+
+	# Cache Config
+	load yaml "plugins/GitSync/config.yml" as "git-config"
+	set the comments at the top of "git-config" to (" ", "GitSync Configuration", "Version {@version}", and "")
+
+	if yaml value "auth.username" from "git-config" is not set:
+		set yaml value "auth.username" from "git-config" to "insert_username"
+	if yaml value "auth.token" from "git-config" is not set:
+		set yaml value "auth.token" from "git-config" to "insert_token"
+	if yaml value "repositories" from "git-config" is not set:
+		set yaml value "repositories.example.url" from "git-config" to "Baezor1/Example"
+		set yaml value "repositories.example.branch" from "git-config" to "main"
+		set yaml value "repositories.example.target" from "git-config" to "synced/example/"
+	if yaml value "debug" from "git-config" is not set:
+		set yaml value "debug" from "git-config" to false
+
+	save yaml "git-config"
+
+	set {-git::auth::username} to yaml value "auth.username" from "git-config"
+	set {-git::auth::token} to yaml value "auth.token" from "git-config"
+	set {-git::debug} to yaml value "debug" from "git-config"
+	set {_nodes::*} to all yaml nodes of "git-config"
+	loop {_nodes::*}:
+		set {_s::*} to loop-value split at "."
+		{_s::1} is "repositories"
+		{_repos::*} does not contain {_s::2}
+		add {_s::2} to {_repos::*}
+	loop {_repos::*}:
+		add loop-value to {-git::repos::*}
+		set {-git::repos::%loop-value%::url} to yaml value "repositories.%loop-value%.url" from "git-config"
+		set {-git::repos::%loop-value%::target} to yaml value "repositories.%loop-value%.target" from "git-config"
+		set {-git::repos::%loop-value%::branch} to yaml value "repositories.%loop-value%.branch" from "git-config"
+
+	# Cache Lang
+	load yaml "plugins/GitSync/lang.yml" as "git-lang"
+	set the comments at the top of "git-lang" to (" ", "GitSync Language", "Version {@version}", and "")
+	if yaml value "prefix" from "git-lang" is not set:
+		set yaml value "prefix" from "git-lang" to "&8[&bGitSync&8] &r"
+	if yaml value "messages.start-sync" from "git-lang" is not set:
+		set yaml value "messages.start-sync" from "git-lang" to "Attempting to sync server with &3$1&f..."
+	if yaml value "messages.finish-sync" from "git-lang" is not set:
+		set yaml value "messages.finish-sync" from "git-lang" to "Synced server with &3$1&f in &3$2&f!"
+	if yaml value "messages.fail-sync" from "git-lang" is not set:
+		set yaml value "messages.fail-sync" from "git-lang" to "Failed to sync server with &3$1&f!"
+
+	if yaml value "messages.start-clone" from "git-lang" is not set:
+		set yaml value "messages.start-clone" from "git-lang" to "Fetching repository &3$1&f from &3$2&f..."
+	if yaml value "messages.finish-clone" from "git-lang" is not set:
+		set yaml value "messages.finish-clone" from "git-lang" to "Fetched repository &3$1&f in &3$2&f!"
+	if yaml value "messages.delete-path" from "git-lang" is not set:
+		set yaml value "messages.delete-path" from "git-lang" to "&fDeleting file path &3$1&f!"
+	if yaml value "messages.create-path" from "git-lang" is not set:
+		set yaml value "messages.create-path" from "git-lang" to "&fCreating file path &3$1&f!"
+	if yaml value "messages.transfer-path" from "git-lang" is not set:
+		set yaml value "messages.transfer-path" from "git-lang" to "&fTransfering file path &3$1&f to &3$2&f!"
+	if yaml value "messages.multiple-repo-alert" from "git-lang" is not set:
+		set yaml value "messages.multiple-repo-alert" from "git-lang" to "&3$1&f repositories have been queued."
+
+	save yaml "git-lang"
+
+	set {-git::lang::prefix} to yaml value "prefix" from "git-lang"
+	
+	set {_msgs::*} to all yaml nodes of "git-lang"
+	loop {_msgs::*}:
+		set {_s::*} to loop-value split at "."
+		{_s::1} is "messages"
+		{_s::2} is set
+		set {-git::lang::%{_s::2}%} to yaml value loop-value from "git-lang"
+
+#
+#	Git Functions
+#
+
+# Clone Repository
+function git_sync(repo: string):
+	while {-git::cloning} is true:
+		wait 5 ticks
+	set {-git::cloning} to true
+	git_sendToOperators(git_parseLang("start-sync", ({_repo})))
+	play sound "ui.button.click" to players where [input has permission "gitsync.admin"]
+
+	# Set Variables
+	set {_dir} to "plugins/GitSync/temp/%{_repo}%/"
+	set {_uri} to "https://github.com/%{-git::repos::%{_repo}%::url}%.git"
+	set {_branch} to {-git::repos::%{_repo}%::branch}
+	set {_target} to "plugins/Skript/scripts/%{-git::repos::%{_repo}%::target}%"
+	set {_start} to now
+	git_sendToOperators(git_parseLang("start-clone", ({_repo}, {-git::repos::%{_repo}%::url}))) if {-git::debug} is true
+	if {-git::repos::%{_repo}%::branch} is set:
+
+		if git_pathExists({_dir}) is true:
+			git_deletePath({_dir})
+			wait 1 second
+
+		# Clone Repository
+		create new section with {_start}, {_uri}, {_dir} and {_branch} stored in {_clone}:
+			Git.cloneRepository().setURI({_uri}).setDirectory(new File({_dir})).setBranchesToClone(Arrays.asList("refs/heads/%{_branch}%")).setBranch("refs/heads/%{_branch}%").setCredentialsProvider(new UserProvider({-git::auth::username}, {-git::auth::token})).call()
+
+			git_sendToOperators(git_parseLang("finish-clone", ({_repo}, "%difference between now and {_start}%"))) if {-git::debug} is true
+
+		run section {_clone} async with {_start}, {_uri}, {_dir} and {_branch} and wait
+
+		# Transfer Cloned Files
+		wait 3 ticks
+		if git_pathExists("%{_dir}%src/") is true:
+			{_target} is set
+			{_target} is not "", " " or "/"
+			if git_pathExists("%{_target}%%{_repo}%:src") is true:
+				git_deletePath("%{_target}%%{_repo}%:src")
+				wait 20 ticks
+			if git_pathExists("%{_target}%%{_repo}%") is true:
+				git_deletePath("%{_target}%%{_repo}%")
+				wait 20 ticks
+			if git_pathExists({_target}) is false:
+				git_createPath({_target})
+				wait 20 ticks
+			git_transferPath("%{_dir}%src/", "%{_target}%%{_repo}%")
+			git_deletePath({_dir})
+			git_sendToOperators(git_parseLang("finish-sync", ({_repo}, "%difference between now and {_start}%")))
+			play sound "entity.experience_orb.pickup" to players where [input has permission "gitsync.admin"]
+		else:
+			git_sendToOperators(git_parseLang("fail-sync", ({_repo}, "%difference between now and {_start}%")))
+			play sound "block.note_block.bass" to players where [input has permission "gitsync.admin"]
+	else:
+		git_sendToOperators(git_parseLang("fail-sync", ({_repo}, "%difference between now and {_start}%")))
+		play sound "block.note_block.bass" to players where [input has permission "gitsync.admin"]
+
+	delete {-git::cloning}
+
+#
+#	Misc API
+#
+
+# Send to Operators
+function git_sendToOperators(msg: string):
+	message {_msg} to console
+	message formatted {_msg} to players where [input has permission "gitsync.admin"]
+
+# Parse Lang
+function git_parseLang(lang: string, args: strings) :: string:
+	{-git::lang::%{_lang}%} is set
+	set {_msg} to {-git::lang::%{_lang}%}
+	loop {_args::*}:
+		add 1 to {_i}
+		replace all "$%{_i}%" in {_msg} with loop-value
+	return "%{-git::lang::prefix}%%{_msg}%"
+
+#
+#	File Management API
+#
+
+# Delete File Path
+function git_deletePath(dir: string):
+	{_dir} is not "", " ", "/" or ":"
+	git_sendToOperators(git_parseLang("delete-path", ({_dir}))) if {-git::debug} is true
+	delete file path {_dir}
+
+# Transfer Path
+function git_transferPath(path1: string, path2: string):
+	git_sendToOperators(git_parseLang("transfer-path", ({_path1}, {_path2}))) if {-git::debug} is true
+	move file path {_path1} to file path {_path2}
+
+# Path Exists
+function git_pathExists(path: string) :: boolean:
+	if file path {_path} is not missing:
+		return true
+	return false
+
+# Create File Path
+function git_createPath(path: string):
+	git_pathExists({_path}) is false
+	git_sendToOperators(git_parseLang("create-path", ({_path}))) if {-git::debug} is true
+	create file path {_path}
+
+# Get All Files
+function git_getAllFiles(path: string) :: strings:
+	add git_getFiles({_path}) to {_r::*}
+	loop git_getDirectories({_path}):
+		add git_getAllFiles(loop-value) to {_r::*}
+	return {_r::*}
+
+# Get Files
+function git_getFiles(path: string) :: strings:
+	set {_files::*} to all files of dir path {_path}
+	loop {_files::*}:
+		add "%loop-value%" to {_r::*}
+	return {_r::*}
+
+# Get Directories
+function git_getDirectories(path: string) :: strings:
+	set {_files::*} to all directories of dir path {_path}
+	loop {_files::*}:
+		add "%loop-value%" to {_r::*}
+	return {_r::*}
+
+# Boolean to String
+function git_booleanToString(val: boolean) :: string:
+	if {_val} is true:
+		return "&atrue"
+	else:
+		return "&cfalse"
